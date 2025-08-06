@@ -13,51 +13,71 @@ class RingDevicePage extends StatefulWidget {
   _RingDevicePageState createState() => _RingDevicePageState();
 }
 
-class _RingDevicePageState extends State<RingDevicePage> {
-  String _displayMessage = 'Waiting for message...';
+class _RingDevicePageState extends State<RingDevicePage> with SingleTickerProviderStateMixin {
   final SmsReader _smsReader = SmsReader();
-  bool _isValidMessage = false;
+  bool _isValid = false;
+  String _deviceName = '';
+  late AnimationController _animationController;
+  late Animation<double> _animation;
 
   @override
   void initState() {
     super.initState();
-    _smsReader.addListener(_processMessage);
-    _processMessage();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.8, end: 1.2).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+    _parseMessage(widget.smsMessage);
+    _smsReader.getController().addListener(_onMessageChanged);
+    _startRetryCycle();
+  }
+
+  void _onMessageChanged() {
+    if (_smsReader.getLatestMessage() != widget.smsMessage) {
+      _parseMessage(_smsReader.getLatestMessage());
+    }
+  }
+
+  void _parseMessage(String message) async {
+    final parsed = await _smsReader.parseMessage(message);
+    if (parsed != null && _smsReader.isValidMessage(message)) {
+      final parts = message.split('|');
+      if (parts[1] == 'Ring') {
+        setState(() {
+          _isValid = true;
+          _deviceName = parsed['deviceName'];
+        });
+      } else {
+        setState(() {
+          _isValid = false;
+          _deviceName = '';
+        });
+      }
+    } else {
+      setState(() {
+        _isValid = false;
+        _deviceName = '';
+      });
+    }
+  }
+
+  void _startRetryCycle() {
+    Future.delayed(Duration(seconds: 10), () {
+      if (!_isValid && mounted) {
+        setState(() {});
+        _startRetryCycle();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _smsReader.removeListener(_processMessage);
+    _smsReader.getController().removeListener(_onMessageChanged);
+    _animationController.dispose();
     super.dispose();
-  }
-
-  void _processMessage() {
-    String message = _smsReader.getLatestMessage();
-    RegExp regex = RegExp(r'Ring: on');
-    if (regex.hasMatch(message)) {
-      setState(() {
-        _displayMessage = 'Ringing device...';
-        _isValidMessage = true;
-      });
-    } else {
-      _isValidMessage = false;
-      _startRetryCycle();
-    }
-  }
-
-  void _startRetryCycle() async {
-    while (mounted && !_isValidMessage) {
-      setState(() {
-        _displayMessage = 'Waiting for message...';
-      });
-      await Future.delayed(Duration(seconds: 10));
-      if (mounted && !_isValidMessage) {
-        setState(() {
-          _displayMessage = 'Ring command not received, sending request again';
-        });
-        await Future.delayed(Duration(seconds: 2));
-      }
-    }
   }
 
   @override
@@ -79,17 +99,31 @@ class _RingDevicePageState extends State<RingDevicePage> {
       body: Stack(
         children: [
           Center(
-            child: Container(
-              width: double.infinity,
-              height: 300,
-              color: Colors.grey[200],
-              child: Center(
-                child: Text(
-                  _displayMessage,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            child: _isValid
+                ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ScaleTransition(
+                  scale: _animation,
+                  child: Icon(
+                    Icons.notifications_active,
+                    size: 100,
+                    color: Colors.blue,
+                  ),
                 ),
-              ),
+                SizedBox(height: 20),
+                Text(
+                  'Ringing device...\nDevice: $_deviceName',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20),
+                ),
+              ],
+            )
+                : Text(
+              _smsReader.getLatestMessage().isEmpty
+                  ? 'Waiting for message...'
+                  : 'Invalid message or device not recognized',
+              style: TextStyle(fontSize: 20),
             ),
           ),
           FloatingTextFieldWidget(),

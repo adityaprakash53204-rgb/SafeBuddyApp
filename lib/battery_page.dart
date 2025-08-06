@@ -14,60 +14,64 @@ class BatteryPage extends StatefulWidget {
 }
 
 class _BatteryPageState extends State<BatteryPage> {
-  String _displayMessage = 'Waiting for message...';
-  int? _batteryPercentage;
   final SmsReader _smsReader = SmsReader();
-  bool _isValidMessage = false;
+  bool _isValid = false;
+  String _deviceName = '';
+  int _batteryLevel = 0;
 
   @override
   void initState() {
     super.initState();
-    _smsReader.addListener(_processMessage);
-    _processMessage();
+    _parseMessage(widget.smsMessage);
+    _smsReader.getController().addListener(_onMessageChanged);
+    _startRetryCycle();
+  }
+
+  void _onMessageChanged() {
+    if (_smsReader.getLatestMessage() != widget.smsMessage) {
+      _parseMessage(_smsReader.getLatestMessage());
+    }
+  }
+
+  void _parseMessage(String message) async {
+    final parsed = await _smsReader.parseMessage(message);
+    if (parsed != null && _smsReader.isValidMessage(message)) {
+      final parts = message.split('|');
+      if (parts[1] == 'Battery') {
+        setState(() {
+          _isValid = true;
+          _deviceName = parsed['deviceName'];
+          _batteryLevel = int.parse(parts[2]);
+        });
+      } else {
+        setState(() {
+          _isValid = false;
+          _deviceName = '';
+          _batteryLevel = 0;
+        });
+      }
+    } else {
+      setState(() {
+        _isValid = false;
+        _deviceName = '';
+        _batteryLevel = 0;
+      });
+    }
+  }
+
+  void _startRetryCycle() {
+    Future.delayed(Duration(seconds: 10), () {
+      if (!_isValid && mounted) {
+        setState(() {});
+        _startRetryCycle();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _smsReader.removeListener(_processMessage);
+    _smsReader.getController().removeListener(_onMessageChanged);
     super.dispose();
-  }
-
-  void _processMessage() {
-    String message = _smsReader.getLatestMessage();
-    RegExp regex = RegExp(r'Battery: (\d{1,3})');
-    Match? match = regex.firstMatch(message);
-    if (match != null) {
-      int? percentage = int.tryParse(match.group(1)!);
-      if (percentage != null && percentage >= 0 && percentage <= 100) {
-        setState(() {
-          _batteryPercentage = percentage;
-          _displayMessage = 'Battery: $_batteryPercentage%';
-          _isValidMessage = true;
-        });
-      } else {
-        _isValidMessage = false;
-        _startRetryCycle();
-      }
-    } else {
-      _isValidMessage = false;
-      _startRetryCycle();
-    }
-  }
-
-  void _startRetryCycle() async {
-    while (mounted && !_isValidMessage) {
-      setState(() {
-        _displayMessage = 'Waiting for message...';
-        _batteryPercentage = null;
-      });
-      await Future.delayed(Duration(seconds: 10));
-      if (mounted && !_isValidMessage) {
-        setState(() {
-          _displayMessage = 'Battery not received, sending request again';
-        });
-        await Future.delayed(Duration(seconds: 2));
-      }
-    }
   }
 
   @override
@@ -89,24 +93,48 @@ class _BatteryPageState extends State<BatteryPage> {
       body: Stack(
         children: [
           Center(
-            child: Column(
+            child: _isValid
+                ? Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: 200,
-                  height: 200,
-                  child: CustomPaint(
-                    painter: BatteryPainter(percentage: _batteryPercentage),
-                    child: Center(
-                      child: Text(
-                        _displayMessage,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 150,
+                      height: 150,
+                      child: CircularProgressIndicator(
+                        value: _batteryLevel / 100,
+                        strokeWidth: 10,
+                        backgroundColor: Colors.grey[300],
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          _batteryLevel > 50
+                              ? Colors.green
+                              : _batteryLevel > 20
+                              ? Colors.yellow
+                              : Colors.red,
+                        ),
                       ),
                     ),
-                  ),
+                    Text(
+                      '$_batteryLevel%',
+                      style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 20),
+                Text(
+                  'Device: $_deviceName',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20),
                 ),
               ],
+            )
+                : Text(
+              _smsReader.getLatestMessage().isEmpty
+                  ? 'Waiting for message...'
+                  : 'Invalid message or device not recognized',
+              style: TextStyle(fontSize: 20),
             ),
           ),
           FloatingTextFieldWidget(),
@@ -114,35 +142,4 @@ class _BatteryPageState extends State<BatteryPage> {
       ),
     );
   }
-}
-
-class BatteryPainter extends CustomPainter {
-  final int? percentage;
-
-  BatteryPainter({this.percentage});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 10
-      ..color = Colors.grey;
-
-    canvas.drawCircle(Offset(size.width / 2, size.height / 2), size.width / 2 - 5, paint);
-
-    if (percentage != null) {
-      paint.color = percentage! > 50 ? Colors.green : percentage! > 20 ? Colors.orange : Colors.red;
-      double sweepAngle = (percentage! / 100) * 2 * 3.14159;
-      canvas.drawArc(
-        Rect.fromCircle(center: Offset(size.width / 2, size.height / 2), radius: size.width / 2 - 5),
-        -3.14159 / 2,
-        sweepAngle,
-        false,
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

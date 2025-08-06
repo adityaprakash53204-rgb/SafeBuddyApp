@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
 import 'custom_drawer.dart';
 import 'dashboard_page.dart';
 import 'sms_reader.dart';
@@ -16,69 +14,69 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> {
-  String _displayMessage = 'Waiting for message...';
-  double? _latitude;
-  double? _longitude;
   final SmsReader _smsReader = SmsReader();
-  bool _isValidMessage = false;
+  bool _isValid = false;
+  String _deviceName = '';
+  double _latitude = 0.0;
+  double _longitude = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _smsReader.addListener(_processMessage);
-    _processMessage();
+    _parseMessage(widget.smsMessage);
+    _smsReader.getController().addListener(_onMessageChanged);
+    _startRetryCycle();
+  }
+
+  void _onMessageChanged() {
+    if (_smsReader.getLatestMessage() != widget.smsMessage) {
+      _parseMessage(_smsReader.getLatestMessage());
+    }
+  }
+
+  void _parseMessage(String message) async {
+    final parsed = await _smsReader.parseMessage(message);
+    if (parsed != null && _smsReader.isValidMessage(message)) {
+      final parts = message.split('|');
+      if (parts[1] == 'Location') {
+        final coords = parts[2].split(',');
+        setState(() {
+          _isValid = true;
+          _deviceName = parsed['deviceName'];
+          _latitude = double.parse(coords[0]);
+          _longitude = double.parse(coords[1]);
+        });
+      } else {
+        setState(() {
+          _isValid = false;
+          _deviceName = '';
+          _latitude = 0.0;
+          _longitude = 0.0;
+        });
+      }
+    } else {
+      setState(() {
+        _isValid = false;
+        _deviceName = '';
+        _latitude = 0.0;
+        _longitude = 0.0;
+      });
+    }
+  }
+
+  void _startRetryCycle() {
+    Future.delayed(Duration(seconds: 10), () {
+      if (!_isValid && mounted) {
+        setState(() {});
+        _startRetryCycle();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _smsReader.removeListener(_processMessage);
+    _smsReader.getController().removeListener(_onMessageChanged);
     super.dispose();
-  }
-
-  void _processMessage() async {
-    String message = _smsReader.getLatestMessage();
-    RegExp regex = RegExp(r'Location: (\d+\.\d+),([-]?\d+\.\d+)');
-    Match? match = regex.firstMatch(message);
-    if (match != null) {
-      _latitude = double.tryParse(match.group(1)!);
-      _longitude = double.tryParse(match.group(2)!);
-      if (_latitude != null && _longitude != null) {
-        setState(() {
-          _displayMessage = 'Map Placeholder\nLatitude: $_latitude\nLongitude: $_longitude';
-          _isValidMessage = true;
-        });
-        // Save to SharedPreferences with timestamp
-        final prefs = await SharedPreferences.getInstance();
-        List<String> history = prefs.getStringList('location_history') ?? [];
-        String timestamp = DateTime.now().toIso8601String();
-        String locationEntry = 'Latitude: $_latitude, Longitude: $_longitude, Timestamp: $timestamp';
-        if (!history.contains(locationEntry)) {
-          history.add(locationEntry);
-          await prefs.setStringList('location_history', history);
-        }
-      } else {
-        _isValidMessage = false;
-        _startRetryCycle();
-      }
-    } else {
-      _isValidMessage = false;
-      _startRetryCycle();
-    }
-  }
-
-  void _startRetryCycle() async {
-    while (mounted && !_isValidMessage) {
-      setState(() {
-        _displayMessage = 'Waiting for message...';
-      });
-      await Future.delayed(Duration(seconds: 10));
-      if (mounted && !_isValidMessage) {
-        setState(() {
-          _displayMessage = 'Location not received, sending request again';
-        });
-        await Future.delayed(Duration(seconds: 2));
-      }
-    }
   }
 
   @override
@@ -100,17 +98,17 @@ class _MapPageState extends State<MapPage> {
       body: Stack(
         children: [
           Center(
-            child: Container(
-              width: double.infinity,
-              height: 300,
-              color: Colors.grey[200],
-              child: Center(
-                child: Text(
-                  _displayMessage,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ),
+            child: _isValid
+                ? Text(
+              'Map Placeholder\nDevice: $_deviceName\nLatitude: $_latitude\nLongitude: $_longitude',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20),
+            )
+                : Text(
+              _smsReader.getLatestMessage().isEmpty
+                  ? 'Waiting for message...'
+                  : 'Invalid message or device not recognized',
+              style: TextStyle(fontSize: 20),
             ),
           ),
           FloatingTextFieldWidget(),

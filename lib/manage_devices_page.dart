@@ -4,6 +4,7 @@ import 'custom_drawer.dart';
 import 'dashboard_page.dart';
 import 'floating_text_field_widget.dart';
 import 'dart:convert';
+import 'dart:math';
 
 class Device {
   final String name;
@@ -58,6 +59,22 @@ class _ManageDevicesPageState extends State<ManageDevicesPage> {
     await prefs.setString('devices', jsonEncode(_devices.map((d) => d.toJson()).toList()));
   }
 
+  void _deleteDevice(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _devices.removeAt(index);
+    });
+    await prefs.setString('devices', jsonEncode(_devices.map((d) => d.toJson()).toList()));
+  }
+
+  String _generateRandomKey() {
+    const String chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    Random random = Random();
+    return String.fromCharCodes(
+      Iterable.generate(8, (_) => chars.codeUnitAt(random.nextInt(chars.length))),
+    );
+  }
+
   Future<void> _showAddDeviceDialog() async {
     final nameController = TextEditingController();
     final simController = TextEditingController();
@@ -79,9 +96,22 @@ class _ManageDevicesPageState extends State<ManageDevicesPage> {
               decoration: InputDecoration(labelText: 'SIM Number'),
               keyboardType: TextInputType.phone,
             ),
-            TextField(
-              controller: keyController,
-              decoration: InputDecoration(labelText: 'Verification Key'),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: keyController,
+                    decoration: InputDecoration(labelText: 'Verification Key'),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.refresh),
+                  onPressed: () {
+                    keyController.text = _generateRandomKey();
+                  },
+                  tooltip: 'Generate Random Key',
+                ),
+              ],
             ),
           ],
         ),
@@ -114,6 +144,68 @@ class _ManageDevicesPageState extends State<ManageDevicesPage> {
     );
   }
 
+  Future<void> _showDeleteDeviceDialog() async {
+    if (_devices.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No devices to delete')),
+      );
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Device'),
+        content: Container(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _devices.length,
+            itemBuilder: (context, index) {
+              final device = _devices[index];
+              return ListTile(
+                title: Text(device.name),
+                subtitle: Text('SIM: ${device.simNumber}'),
+                trailing: IconButton(
+                  icon: Icon(Icons.delete, color: Colors.red),
+                  onPressed: () async {
+                    bool? confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Text('Confirm Delete'),
+                        content: Text('Are you sure you want to delete ${device.name}? This action cannot be undone.'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: Text('Cancel'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: Text('Delete', style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      _deleteDevice(index);
+                      Navigator.pop(context); // Close the delete device dialog
+                    }
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -140,6 +232,11 @@ class _ManageDevicesPageState extends State<ManageDevicesPage> {
                   leading: Icon(Icons.add, color: Colors.blue),
                   title: Text('Add Device'),
                   onTap: _showAddDeviceDialog,
+                ),
+                ListTile(
+                  leading: Icon(Icons.delete, color: Colors.red),
+                  title: Text('Delete Device'),
+                  onTap: _showDeleteDeviceDialog,
                 ),
                 ListTile(
                   leading: Icon(Icons.info, color: Colors.blue),
